@@ -90,13 +90,40 @@ static void neighbors(int r, int c, std::vector<std::pair<int, int>> &out) {
 
 void Decide() {
   // Strategy: one action per Decide.
-  // 1) For any revealed number cell, if marked neighbors equals the number -> auto-explore it
-  // 2) If for any revealed number, unknown + marked == number -> mark an unknown neighbor
-  // 3) Otherwise, visit the first unknown cell we find
+  // Priority:
+  // 1) Mark obvious mines where (number - marked) == unknown
+  // 2) Auto-explore numbers where marked == number
+  // 3) Visit the unknown neighbor with minimum estimated risk among frontier cells
 
   std::vector<std::pair<int, int>> nbrs;
 
-  // Step 1: try auto-explore on any satisfied number cell
+  // Step 1: try to mark an obvious mine
+  for (int r = 0; r < rows; ++r) {
+    for (int c = 0; c < columns; ++c) {
+      char ch = observed_map[r][c];
+      if (ch >= '0' && ch <= '8') {
+        int number_required = ch - '0';
+        neighbors(r, c, nbrs);
+        int marked_count = 0;
+        int unknown_count = 0;
+        for (auto [nr, nc] : nbrs) {
+          char v = observed_map[nr][nc];
+          if (v == '@') ++marked_count;
+          else if (v == '?') ++unknown_count;
+        }
+        if (unknown_count > 0 && (number_required - marked_count) == unknown_count) {
+          for (auto [nr, nc] : nbrs) {
+            if (observed_map[nr][nc] == '?') {
+              Execute(nr, nc, 1);
+              return;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Step 2: try auto-explore on any satisfied number cell
   for (int r = 0; r < rows; ++r) {
     for (int c = 0; c < columns; ++c) {
       char ch = observed_map[r][c];
@@ -118,48 +145,54 @@ void Decide() {
     }
   }
 
-  // Step 2: try to mark an obvious mine
+  // Step 3: Visit the least risky frontier unknown based on simple probability estimate
+  double best_risk = 1e9;
+  int best_r = -1, best_c = -1;
   for (int r = 0; r < rows; ++r) {
     for (int c = 0; c < columns; ++c) {
-      char ch = observed_map[r][c];
-      if (ch >= '0' && ch <= '8') {
-        int number_required = ch - '0';
+      if (observed_map[r][c] == '?') {
+        // compute risk from adjacent revealed numbers
         neighbors(r, c, nbrs);
-        int marked_count = 0;
-        int unknown_count = 0;
+        double cell_risk = 1.0; // default risk for isolated cells
+        bool has_context = false;
+        double worst_local = 0.0;
         for (auto [nr, nc] : nbrs) {
           char v = observed_map[nr][nc];
-          if (v == '@') ++marked_count;
-          else if (v == '?') ++unknown_count;
-        }
-        if (marked_count + unknown_count == number_required && unknown_count > 0) {
-          // Mark the first unknown neighbor
-          for (auto [nr, nc] : nbrs) {
-            if (observed_map[nr][nc] == '?') {
-              Execute(nr, nc, 1);
-              return;
+          if (v >= '0' && v <= '8') {
+            has_context = true;
+            int number_required = v - '0';
+            // compute unknown and marked around that number
+            std::vector<std::pair<int,int>> nn;
+            neighbors(nr, nc, nn);
+            int marked_count = 0, unknown_count = 0;
+            for (auto [ar, ac] : nn) {
+              char vv = observed_map[ar][ac];
+              if (vv == '@') ++marked_count;
+              else if (vv == '?') ++unknown_count;
+            }
+            int remaining = number_required - marked_count;
+            if (remaining < 0) remaining = 0;
+            if (unknown_count > 0) {
+              double local = static_cast<double>(remaining) / static_cast<double>(unknown_count);
+              if (local > worst_local) worst_local = local; // pessimistic aggregation
             }
           }
         }
-      }
-    }
-  }
-
-  // Step 3: visit a cell. Prefer unknown adjacent to a revealed zero, else any unknown.
-  for (int r = 0; r < rows; ++r) {
-    for (int c = 0; c < columns; ++c) {
-      if (observed_map[r][c] == '0') {
-        neighbors(r, c, nbrs);
-        for (auto [nr, nc] : nbrs) {
-          if (observed_map[nr][nc] == '?') {
-            Execute(nr, nc, 0);
-            return;
-          }
+        if (has_context) cell_risk = worst_local; else cell_risk = 0.5; // arbitrary prior
+        if (cell_risk < best_risk) {
+          best_risk = cell_risk;
+          best_r = r;
+          best_c = c;
         }
       }
     }
   }
+  if (best_r != -1) {
+    Execute(best_r, best_c, 0);
+    return;
+  }
 
+  // Fallback: visit any unknown (should rarely happen)
   for (int r = 0; r < rows; ++r) {
     for (int c = 0; c < columns; ++c) {
       if (observed_map[r][c] == '?') {
