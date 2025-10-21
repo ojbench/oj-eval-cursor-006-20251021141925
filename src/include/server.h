@@ -3,6 +3,8 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <vector>
+#include <queue>
 
 /*
  * You may need to define some global variables for the information of the game map here.
@@ -15,6 +17,62 @@ int columns;      // The count of columns of the game map. You MUST NOT modify i
 int total_mines;  // The count of mines of the game map. You MUST NOT modify its name. You should initialize this
                   // variable in function InitMap. It will be used in the advanced task.
 int game_state;  // The state of the game, 0 for continuing, 1 for winning, -1 for losing. You MUST NOT modify its name.
+
+// Internal game state
+static std::vector<std::vector<bool>> mine_grid;         // true if mine
+static std::vector<std::vector<int>> adjacent_mines;     // number of adjacent mines
+static std::vector<std::vector<bool>> visited_grid;      // visited status
+static std::vector<std::vector<bool>> marked_grid;       // marked status
+static int visited_non_mine_count = 0;                   // number of visited non-mine cells
+static int marked_correct_mines_count = 0;               // number of correctly marked mines
+
+static inline bool InBounds(int r, int c) {
+  return r >= 0 && r < rows && c >= 0 && c < columns;
+}
+
+static inline void RecomputeGameWinState() {
+  const int total_non_mines = rows * columns - total_mines;
+  if (visited_non_mine_count == total_non_mines) {
+    game_state = 1;
+  }
+}
+
+static void FloodVisitFrom(int r0, int c0) {
+  // Visit a non-mine cell; expand if zero using BFS
+  std::queue<std::pair<int, int>> bfs_queue;
+  auto try_visit = [&](int r, int c) {
+    if (!InBounds(r, c)) return;
+    if (mine_grid[r][c]) return;          // never visit mines here
+    if (visited_grid[r][c]) return;
+    if (marked_grid[r][c]) return;        // marked cells are not auto-visited
+    visited_grid[r][c] = true;
+    ++visited_non_mine_count;
+    if (adjacent_mines[r][c] == 0) {
+      bfs_queue.emplace(r, c);
+    }
+  };
+
+  try_visit(r0, c0);
+  while (!bfs_queue.empty()) {
+    auto [r, c] = bfs_queue.front();
+    bfs_queue.pop();
+    static const int dr[8] = {-1,-1,-1,0,0,1,1,1};
+    static const int dc[8] = {-1,0,1,-1,1,-1,0,1};
+    for (int k = 0; k < 8; ++k) {
+      int nr = r + dr[k], nc = c + dc[k];
+      if (!InBounds(nr, nc)) continue;
+      if (mine_grid[nr][nc]) continue;
+      if (visited_grid[nr][nc]) continue;
+      if (marked_grid[nr][nc]) continue;
+      visited_grid[nr][nc] = true;
+      ++visited_non_mine_count;
+      if (adjacent_mines[nr][nc] == 0) {
+        bfs_queue.emplace(nr, nc);
+      }
+    }
+  }
+  RecomputeGameWinState();
+}
 
 /**
  * @brief The definition of function InitMap()
@@ -30,7 +88,38 @@ int game_state;  // The state of the game, 0 for continuing, 1 for winning, -1 f
  */
 void InitMap() {
   std::cin >> rows >> columns;
-  // TODO (student): Implement me!
+  mine_grid.assign(rows, std::vector<bool>(columns, false));
+  adjacent_mines.assign(rows, std::vector<int>(columns, 0));
+  visited_grid.assign(rows, std::vector<bool>(columns, false));
+  marked_grid.assign(rows, std::vector<bool>(columns, false));
+  visited_non_mine_count = 0;
+  marked_correct_mines_count = 0;
+  total_mines = 0;
+  game_state = 0;
+
+  // Read map lines
+  for (int i = 0; i < rows; ++i) {
+    for (int j = 0; j < columns; ++j) {
+      char ch;
+      std::cin >> ch;
+      mine_grid[i][j] = (ch == 'X');
+      if (mine_grid[i][j]) ++total_mines;
+    }
+  }
+
+  // Precompute adjacent mine counts
+  static const int dr[8] = {-1,-1,-1,0,0,1,1,1};
+  static const int dc[8] = {-1,0,1,-1,1,-1,0,1};
+  for (int i = 0; i < rows; ++i) {
+    for (int j = 0; j < columns; ++j) {
+      int cnt = 0;
+      for (int k = 0; k < 8; ++k) {
+        int ni = i + dr[k], nj = j + dc[k];
+        if (InBounds(ni, nj) && mine_grid[ni][nj]) ++cnt;
+      }
+      adjacent_mines[i][j] = cnt;
+    }
+  }
 }
 
 /**
@@ -64,7 +153,17 @@ void InitMap() {
  * @note For invalid operation, you should not do anything.
  */
 void VisitBlock(int r, int c) {
-  // TODO (student): Implement me!
+  if (game_state != 0) return;          // game already ended
+  if (!InBounds(r, c)) return;          // invalid operation
+  if (visited_grid[r][c]) return;       // already visited
+  if (marked_grid[r][c]) return;        // marked has no effect
+  if (mine_grid[r][c]) {
+    // Visiting a mine ends the game immediately
+    visited_grid[r][c] = true;
+    game_state = -1;
+    return;
+  }
+  FloodVisitFrom(r, c);
 }
 
 /**
@@ -101,7 +200,20 @@ void VisitBlock(int r, int c) {
  * @note For invalid operation, you should not do anything.
  */
 void MarkMine(int r, int c) {
-  // TODO (student): Implement me!
+  if (game_state != 0) return;          // game already ended
+  if (!InBounds(r, c)) return;          // invalid operation
+  if (visited_grid[r][c]) return;       // already visited -> no effect
+  if (marked_grid[r][c]) return;        // already marked -> no effect
+
+  if (mine_grid[r][c]) {
+    marked_grid[r][c] = true;
+    ++marked_correct_mines_count;
+    // marking does not change win condition directly
+  } else {
+    // Marking a non-mine causes immediate failure
+    marked_grid[r][c] = true; // keep for rendering 'X'
+    game_state = -1;
+  }
 }
 
 /**
@@ -121,7 +233,33 @@ void MarkMine(int r, int c) {
  * And the game ends (and player wins).
  */
 void AutoExplore(int r, int c) {
-  // TODO (student): Implement me!
+  if (game_state != 0) return;
+  if (!InBounds(r, c)) return;
+  if (!visited_grid[r][c]) return;      // only for visited non-mine cells
+  if (mine_grid[r][c]) return;
+
+  // Count marked neighbors and compare with the number on this cell
+  int required = adjacent_mines[r][c];
+  int marked_neighbors = 0;
+  static const int dr[8] = {-1,-1,-1,0,0,1,1,1};
+  static const int dc[8] = {-1,0,1,-1,1,-1,0,1};
+  for (int k = 0; k < 8; ++k) {
+    int nr = r + dr[k], nc = c + dc[k];
+    if (!InBounds(nr, nc)) continue;
+    if (marked_grid[nr][nc]) ++marked_neighbors;
+  }
+  if (marked_neighbors != required) return;  // not eligible
+
+  // Visit all non-mine neighbors (not marked, not visited)
+  for (int k = 0; k < 8; ++k) {
+    int nr = r + dr[k], nc = c + dc[k];
+    if (!InBounds(nr, nc)) continue;
+    if (mine_grid[nr][nc]) continue;
+    if (visited_grid[nr][nc]) continue;
+    if (marked_grid[nr][nc]) continue;
+    FloodVisitFrom(nr, nc);
+    if (game_state != 0) return;  // may win here
+  }
 }
 
 /**
@@ -134,7 +272,17 @@ void AutoExplore(int r, int c) {
  * @note If the player wins, we consider that ALL mines are correctly marked.
  */
 void ExitGame() {
-  // TODO (student): Implement me!
+  if (game_state == 1) {
+    std::cout << "YOU WIN!" << std::endl;
+    std::cout << visited_non_mine_count << " " << total_mines << std::endl;
+  } else if (game_state == -1) {
+    std::cout << "GAME OVER!" << std::endl;
+    std::cout << visited_non_mine_count << " " << marked_correct_mines_count << std::endl;
+  } else {
+    // Should not happen in normal flow, but keep a fallback
+    std::cout << "GAME OVER!" << std::endl;
+    std::cout << visited_non_mine_count << " " << marked_correct_mines_count << std::endl;
+  }
   exit(0);  // Exit the game immediately
 }
 
@@ -163,7 +311,39 @@ void ExitGame() {
  * @note Use std::cout to print the game map, especially when you want to try the advanced task!!!
  */
 void PrintMap() {
-  // TODO (student): Implement me!
+  for (int i = 0; i < rows; ++i) {
+    for (int j = 0; j < columns; ++j) {
+      char out_char = '?';
+      if (game_state == 1) {
+        // Victory: reveal all mines as '@', others are their digits
+        if (mine_grid[i][j]) {
+          out_char = '@';
+        } else {
+          out_char = static_cast<char>('0' + adjacent_mines[i][j]);
+        }
+      } else {
+        // Ongoing or failure
+        if (visited_grid[i][j]) {
+          if (mine_grid[i][j]) {
+            out_char = 'X';
+          } else {
+            out_char = static_cast<char>('0' + adjacent_mines[i][j]);
+          }
+        } else if (marked_grid[i][j]) {
+          // Marked but not visited
+          if (mine_grid[i][j]) {
+            out_char = '@';
+          } else {
+            out_char = 'X';  // wrong mark appears as X
+          }
+        } else {
+          out_char = '?';
+        }
+      }
+      std::cout << out_char;
+    }
+    std::cout << std::endl;
+  }
 }
 
 #endif
