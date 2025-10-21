@@ -3,6 +3,8 @@
 
 #include <iostream>
 #include <utility>
+#include <vector>
+#include <string>
 
 extern int rows;         // The count of rows of the game map.
 extern int columns;      // The count of columns of the game map.
@@ -33,8 +35,12 @@ void Execute(int r, int c, int type);
  * @details This function is designed to initialize the game. It should be called at the beginning of the game, which
  * will read the scale of the game map and the first step taken by the server (see README).
  */
+// Client-side observed map of the current game state
+static std::vector<std::string> observed_map;
+
 void InitGame() {
-  // TODO (student): Initialize all your global variables!
+  // Initialize all client-side global states
+  observed_map.assign(rows, std::string(columns, '?'));
   int first_row, first_column;
   std::cin >> first_row >> first_column;
   Execute(first_row, first_column, 0);
@@ -50,8 +56,18 @@ void InitGame() {
  *     12?
  *     01?
  */
+// Client-side observed map of the current game state
 void ReadMap() {
-  // TODO (student): Implement me!
+  observed_map.resize(rows);
+  for (int r = 0; r < rows; ++r) {
+    std::string line;
+    std::cin >> line;
+    // Defensive: ensure size matches columns
+    if (static_cast<int>(line.size()) < columns) {
+      line.resize(columns, '?');
+    }
+    observed_map[r] = line.substr(0, columns);
+  }
 }
 
 /**
@@ -60,11 +76,98 @@ void ReadMap() {
  * @details This function is designed to decide the next step when playing the client's (or player's) role. Open up your
  * mind and make your decision here! Caution: you can only execute once in this function.
  */
+static inline bool in_bounds(int r, int c) { return r >= 0 && r < rows && c >= 0 && c < columns; }
+
+static void neighbors(int r, int c, std::vector<std::pair<int, int>> &out) {
+  static const int dr[8] = {-1,-1,-1,0,0,1,1,1};
+  static const int dc[8] = {-1,0,1,-1,1,-1,0,1};
+  out.clear();
+  for (int k = 0; k < 8; ++k) {
+    int nr = r + dr[k], nc = c + dc[k];
+    if (in_bounds(nr, nc)) out.emplace_back(nr, nc);
+  }
+}
+
 void Decide() {
-  // TODO (student): Implement me!
-  // while (true) {
-  //   Execute(0, 0);
-  // }
+  // Strategy: one action per Decide.
+  // 1) For any revealed number cell, if marked neighbors equals the number -> auto-explore it
+  // 2) If for any revealed number, unknown + marked == number -> mark an unknown neighbor
+  // 3) Otherwise, visit the first unknown cell we find
+
+  std::vector<std::pair<int, int>> nbrs;
+
+  // Step 1: try auto-explore on any satisfied number cell
+  for (int r = 0; r < rows; ++r) {
+    for (int c = 0; c < columns; ++c) {
+      char ch = observed_map[r][c];
+      if (ch >= '0' && ch <= '8') {
+        int number_required = ch - '0';
+        neighbors(r, c, nbrs);
+        int marked_count = 0;
+        int unknown_count = 0;
+        for (auto [nr, nc] : nbrs) {
+          char v = observed_map[nr][nc];
+          if (v == '@') ++marked_count;
+          else if (v == '?') ++unknown_count;
+        }
+        if (marked_count == number_required && unknown_count > 0) {
+          Execute(r, c, 2);  // auto-explore
+          return;
+        }
+      }
+    }
+  }
+
+  // Step 2: try to mark an obvious mine
+  for (int r = 0; r < rows; ++r) {
+    for (int c = 0; c < columns; ++c) {
+      char ch = observed_map[r][c];
+      if (ch >= '0' && ch <= '8') {
+        int number_required = ch - '0';
+        neighbors(r, c, nbrs);
+        int marked_count = 0;
+        int unknown_count = 0;
+        for (auto [nr, nc] : nbrs) {
+          char v = observed_map[nr][nc];
+          if (v == '@') ++marked_count;
+          else if (v == '?') ++unknown_count;
+        }
+        if (marked_count + unknown_count == number_required && unknown_count > 0) {
+          // Mark the first unknown neighbor
+          for (auto [nr, nc] : nbrs) {
+            if (observed_map[nr][nc] == '?') {
+              Execute(nr, nc, 1);
+              return;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Step 3: visit a cell. Prefer unknown adjacent to a revealed zero, else any unknown.
+  for (int r = 0; r < rows; ++r) {
+    for (int c = 0; c < columns; ++c) {
+      if (observed_map[r][c] == '0') {
+        neighbors(r, c, nbrs);
+        for (auto [nr, nc] : nbrs) {
+          if (observed_map[nr][nc] == '?') {
+            Execute(nr, nc, 0);
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  for (int r = 0; r < rows; ++r) {
+    for (int c = 0; c < columns; ++c) {
+      if (observed_map[r][c] == '?') {
+        Execute(r, c, 0);
+        return;
+      }
+    }
+  }
 }
 
 #endif
