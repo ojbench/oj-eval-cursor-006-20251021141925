@@ -68,6 +68,16 @@ class ACMOJClient:
                 print(f"Response text: {response.text}")
             return None
 
+    def submit_code(self, problem_id: int, language: str, code_text: str) -> Optional[Dict]:
+        data = {
+            "language": language,
+            "code": code_text,
+        }
+        result = self._make_request("POST", f"/problem/{problem_id}/submit", data=data)
+        if result and 'id' in result:
+            self._save_submission_id(result['id'])
+        return result
+
     def _save_submission_id(self, submission_id):
         try:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
